@@ -1,7 +1,5 @@
 package fileset
 
-import "sync"
-
 type File struct {
 	Key      Key
 	Modified int64
@@ -26,7 +24,6 @@ func (a Key) newerThan(b Key) bool {
 }
 
 type Set struct {
-	mutex              sync.RWMutex
 	files              map[Key]fileRecord
 	remoteKey          [64]map[string]Key
 	globalAvailability map[string]bitset
@@ -43,36 +40,40 @@ func NewSet() *Set {
 }
 
 func (m *Set) AddLocal(fs []File) {
-	m.mutex.Lock()
-	m.unlockedAddRemote(0, fs)
-	m.mutex.Unlock()
+	m.addRemote(0, fs)
 }
 
 func (m *Set) SetLocal(fs []File) {
-	m.mutex.Lock()
-	m.unlockedSetRemote(0, fs)
-	m.mutex.Unlock()
+	m.setRemote(0, fs)
 }
 
 func (m *Set) AddRemote(cid uint, fs []File) {
 	if cid < 1 || cid > 63 {
 		panic("Connection ID must be in the range 1 - 63 inclusive")
 	}
-	m.mutex.Lock()
-	m.unlockedAddRemote(cid, fs)
-	m.mutex.Unlock()
+	m.addRemote(cid, fs)
 }
 
 func (m *Set) SetRemote(cid uint, fs []File) {
 	if cid < 1 || cid > 63 {
 		panic("Connection ID must be in the range 1 - 63 inclusive")
 	}
-	m.mutex.Lock()
-	m.unlockedSetRemote(cid, fs)
-	m.mutex.Unlock()
+	m.setRemote(cid, fs)
 }
 
-func (m *Set) unlockedAddRemote(cid uint, fs []File) {
+func (m *Set) Need(cid uint) []File {
+	var fs []File
+
+	for name, gk := range m.globalKey {
+		if gk.newerThan(m.remoteKey[cid][name]) {
+			fs = append(fs, m.files[gk].File)
+		}
+	}
+
+	return fs
+}
+
+func (m *Set) addRemote(cid uint, fs []File) {
 	remFiles := m.remoteKey[cid]
 	for _, f := range fs {
 		n := f.Key.Name
@@ -109,7 +110,7 @@ func (m *Set) unlockedAddRemote(cid uint, fs []File) {
 	}
 }
 
-func (m *Set) unlockedSetRemote(cid uint, fs []File) {
+func (m *Set) setRemote(cid uint, fs []File) {
 	// Decrement usage for all files belonging to this remote, and remove
 	// those that are no longer needed.
 	for _, fk := range m.remoteKey[cid] {
@@ -155,19 +156,5 @@ func (m *Set) unlockedSetRemote(cid uint, fs []File) {
 	}
 
 	// Add new remote remoteKey to the mix
-	m.unlockedAddRemote(cid, fs)
-}
-
-func (m *Set) Need(cid uint) []File {
-	var fs []File
-	m.mutex.Lock()
-
-	for name, gk := range m.globalKey {
-		if gk.newerThan(m.remoteKey[cid][name]) {
-			fs = append(fs, m.files[gk].File)
-		}
-	}
-
-	m.mutex.Unlock()
-	return fs
+	m.addRemote(cid, fs)
 }
