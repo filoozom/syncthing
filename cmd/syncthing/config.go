@@ -45,6 +45,7 @@ type OptionsConfiguration struct {
 	ReconnectIntervalS int      `xml:"reconnectionIntervalS" default:"60" ini:"reconnection-interval"`
 	MaxChangeKbps      int      `xml:"maxChangeKbps" default:"1000" ini:"max-change-bw"`
 	StartBrowser       bool     `xml:"startBrowser" default:"true"`
+	UseUPnP            bool     `xml:"useUPnP" default:"true"`
 }
 
 func setDefaults(data interface{}) error {

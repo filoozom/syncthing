@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/calmh/syncthing/buffers"
+	pm "github.com/calmh/syncthing/port-mapping"
 )
 
 const (
@@ -41,7 +42,7 @@ var (
 // When we hit this many errors in succession, we stop.
 const maxErrors = 30
 
-func NewDiscoverer(id string, port int, extServer string) (*Discoverer, error) {
+func NewDiscoverer(id string, port int, extServer string, useUPnP bool) (*Discoverer, error) {
 	local := &net.UDPAddr{IP: nil, Port: AnnouncementPort}
 	conn, err := net.ListenUDP("udp", local)
 	if err != nil {
@@ -67,7 +68,7 @@ func NewDiscoverer(id string, port int, extServer string) (*Discoverer, error) {
 		go disc.sendAnnouncements()
 	}
 	if len(disc.extServer) > 0 {
-		go disc.sendExtAnnouncements()
+		go disc.sendExtAnnouncements(useUPnP)
 	}
 
 	return disc, nil
@@ -160,20 +161,38 @@ func (d *Discoverer) sendAnnouncements() {
 	log.Println("discover/write: local: stopping due to too many errors:", err)
 }
 
-func (d *Discoverer) sendExtAnnouncements() {
+func (d *Discoverer) sendExtAnnouncements(useUPnP bool) {
 	remote, err := net.ResolveUDPAddr("udp", d.extServer)
 	if err != nil {
 		log.Printf("discover/external: %v; no external announcements", err)
 		return
 	}
 
-	var pkt = AnnounceV2{AnnouncementMagicV2, d.MyID, []Address{{nil, 22000}}}
-	var buf = pkt.MarshalXDR()
+	var port uint16 = 22000
 	var errCounter = 0
+
+	var pkt AnnounceV2
+	var buf []byte
+
+	if !useUPnP {
+		pkt = AnnounceV2{AnnouncementMagicV2, d.MyID, []Address{{nil, port}}}
+		buf = pkt.MarshalXDR()
+	}
 
 	for errCounter < maxErrors {
 		if debug {
 			dlog.Println("send announcement -> ", remote)
+		}
+
+		if useUPnP {
+			ext, err := d.setupPortMapping(port)
+			if err != nil {
+				log.Println("discover/upnp: ", err)
+			} else {
+				port = ext
+			}
+			pkt = AnnounceV2{AnnouncementMagicV2, d.MyID, []Address{{nil, port}}}
+			buf = pkt.MarshalXDR()
 		}
 		_, err = d.conn.WriteTo(buf, remote)
 		if err != nil {
@@ -338,4 +357,24 @@ func ipStr(ip []byte) string {
 		ss[i] = fmt.Sprintf(f, ip[i])
 	}
 	return strings.Join(ss, s)
+}
+
+func (d *Discoverer) setupPortMapping(port uint16) (mapped uint16, err error) {
+	nat, err := pm.Discover()
+	if err != nil {
+		return
+	}
+
+	var external net.IP
+	if external, err = nat.GetExternalAddress(); err != nil {
+		err = fmt.Errorf("Unable to get external IP: %v", err)
+		return
+	}
+	if Debug {
+		log.Println("External IP:", external)
+	}
+
+	mappedPort, err := nat.AddPortMapping("tcp", 22000, int(port), "Syncthing", 2*int(d.ExtBroadcastIntv.Seconds()))
+	mapped = uint16(mappedPort)
+	return
 }

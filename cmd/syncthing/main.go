@@ -458,7 +458,7 @@ func discovery(addr string) *discover.Discoverer {
 		infoln("Sending external discovery announcements")
 	}
 
-	disc, err := discover.NewDiscoverer(myID, port, cfg.Options.GlobalAnnServer)
+	disc, err := discover.NewDiscoverer(myID, port, cfg.Options.GlobalAnnServer, cfg.Options.UseUPnP)
 
 	if err != nil {
 		warnf("No discovery possible (%v)", err)
